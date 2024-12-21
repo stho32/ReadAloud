@@ -3,12 +3,13 @@ import os
 import traceback
 import random
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QTextEdit, QPushButton, QMessageBox, QSplitter)
-from PyQt5.QtCore import Qt
-from openai import OpenAI
+                            QTextEdit, QPushButton, QMessageBox, QSplitter, QProgressBar,
+                            QHBoxLayout, QSlider, QComboBox, QLabel)
+from PyQt5.QtCore import Qt, QTimer
 import pygame
 import tempfile
 from dotenv import load_dotenv
+from openai import OpenAI
 
 class TextToSpeechApp(QMainWindow):
     def __init__(self):
@@ -30,10 +31,20 @@ class TextToSpeechApp(QMainWindow):
         # Splitter für Text und Log
         splitter = QSplitter(Qt.Vertical)
         
-        # Oberer Bereich: Textfeld
+        # Oberer Bereich: Textfeld und Character Count
+        text_widget = QWidget()
+        text_layout = QVBoxLayout(text_widget)
+        
         self.text_edit = QTextEdit()
         self.text_edit.setPlaceholderText("Bitte Text zum Vorlesen hier einfügen...")
-        splitter.addWidget(self.text_edit)
+        self.text_edit.textChanged.connect(self.update_char_count)
+        text_layout.addWidget(self.text_edit)
+        
+        # Character count label
+        self.char_count_label = QLabel("Zeichen: 0")
+        text_layout.addWidget(self.char_count_label)
+        
+        splitter.addWidget(text_widget)
 
         # Unterer Bereich: Log-Ausgabe
         self.log_edit = QTextEdit()
@@ -46,10 +57,46 @@ class TextToSpeechApp(QMainWindow):
         
         layout.addWidget(splitter)
 
-        # Vorlesen-Button
+        # Progress Bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        # Controls Layout
+        controls_layout = QHBoxLayout()
+
+        # Voice Selection
+        self.voice_combo = QComboBox()
+        self.voice_combo.addItems(["alloy", "echo", "fable", "onyx", "nova", "shimmer"])
+        controls_layout.addWidget(QLabel("Stimme:"))
+        controls_layout.addWidget(self.voice_combo)
+
+        # Volume Control
+        controls_layout.addWidget(QLabel("Lautstärke:"))
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setMinimum(0)
+        self.volume_slider.setMaximum(100)
+        self.volume_slider.setValue(100)
+        self.volume_slider.valueChanged.connect(self.update_volume)
+        controls_layout.addWidget(self.volume_slider)
+
+        # Buttons
+        button_layout = QHBoxLayout()
         self.read_button = QPushButton("Vorlesen")
         self.read_button.clicked.connect(self.read_text)
-        layout.addWidget(self.read_button)
+        
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.clicked.connect(self.stop_playback)
+        self.stop_button.setEnabled(False)
+        
+        button_layout.addWidget(self.read_button)
+        button_layout.addWidget(self.stop_button)
+
+        controls_layout.addLayout(button_layout)
+        layout.addLayout(controls_layout)
+
+        # Initialize playback state
+        self.is_playing = False
 
     def log(self, message):
         """Fügt eine Nachricht zum Log hinzu"""
@@ -104,6 +151,27 @@ class TextToSpeechApp(QMainWindow):
         
         QMessageBox.critical(self, title, f"{str(error)}")
 
+    def update_char_count(self):
+        """Aktualisiert die Zeichenanzahl-Anzeige"""
+        count = len(self.text_edit.toPlainText())
+        self.char_count_label.setText(f"Zeichen: {count}")
+
+    def update_volume(self):
+        """Aktualisiert die Lautstärke"""
+        volume = self.volume_slider.value() / 100.0
+        pygame.mixer.music.set_volume(volume)
+
+    def stop_playback(self):
+        """Stoppt die Wiedergabe"""
+        if self.is_playing:
+            pygame.mixer.music.stop()
+            self.is_playing = False
+            self.stop_button.setEnabled(False)
+            self.read_button.setEnabled(True)
+            self.read_button.setText("Vorlesen")
+            self.progress_bar.setVisible(False)
+            self.log("Wiedergabe gestoppt.")
+
     def read_text(self):
         """Liest den eingegebenen Text vor"""
         text = self.text_edit.toPlainText().strip()
@@ -115,6 +183,8 @@ class TextToSpeechApp(QMainWindow):
 
         self.read_button.setEnabled(False)
         self.read_button.setText("Lese vor...")
+        self.stop_button.setEnabled(True)
+        self.is_playing = True
         self.log("\nStarte Vorlesevorgang...")
         
         try:
@@ -122,13 +192,21 @@ class TextToSpeechApp(QMainWindow):
             chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
             self.log(f"Text in {len(chunks)} Abschnitte aufgeteilt.")
             
-            # Wähle zufällige Stimme
-            voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
-            selected_voice = random.choice(voices)
+            # Progress Bar einrichten
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setMaximum(len(chunks))
+            self.progress_bar.setValue(0)
+            
+            # Gewählte Stimme verwenden
+            selected_voice = self.voice_combo.currentText()
             self.log(f"Gewählte Stimme: {selected_voice}")
             
             for i, chunk in enumerate(chunks, 1):
+                if not self.is_playing:
+                    break
+                    
                 self.log(f"\nVerarbeite Abschnitt {i} von {len(chunks)}...")
+                self.progress_bar.setValue(i)
                 
                 # TTS-Anfrage an OpenAI
                 self.log("Sende Anfrage an OpenAI TTS API...")
@@ -147,27 +225,29 @@ class TextToSpeechApp(QMainWindow):
                     self.log(f"Schreibe Audio in temporäre Datei: {temp_file_path}")
                     response.stream_to_file(temp_file_path)
                     
-                    # Warte kurz und prüfe, ob die Datei existiert
                     if not os.path.exists(temp_file_path):
                         raise FileNotFoundError(f"Temporäre Datei wurde nicht erstellt: {temp_file_path}")
                     
-                    # Prüfe die Dateigröße
                     file_size = os.path.getsize(temp_file_path)
                     self.log(f"Temporäre Datei erstellt, Größe: {file_size} Bytes")
                     
                     if file_size == 0:
                         raise ValueError("Temporäre Audiodatei ist leer")
                     
+                    if not self.is_playing:
+                        break
+                        
                     # Audio abspielen
                     self.log("Lade Audiodatei...")
                     pygame.mixer.music.load(temp_file_path)
+                    pygame.mixer.music.set_volume(self.volume_slider.value() / 100.0)
                     self.log("Starte Wiedergabe...")
                     pygame.mixer.music.play()
                     
                     # Warten bis die Wiedergabe beendet ist
-                    while pygame.mixer.music.get_busy():
+                    while pygame.mixer.music.get_busy() and self.is_playing:
                         pygame.time.Clock().tick(10)
-                        QApplication.processEvents()  # Halte GUI reaktionsfähig
+                        QApplication.processEvents()
                     
                 finally:
                     # Aufräumen
@@ -187,8 +267,11 @@ class TextToSpeechApp(QMainWindow):
         except Exception as e:
             self.show_error("Fehler beim Vorlesen", e)
         finally:
+            self.is_playing = False
             self.read_button.setEnabled(True)
             self.read_button.setText("Vorlesen")
+            self.stop_button.setEnabled(False)
+            self.progress_bar.setVisible(False)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
