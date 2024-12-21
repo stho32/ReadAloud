@@ -1,6 +1,7 @@
 import sys
 import os
 import traceback
+import random
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QTextEdit, QPushButton, QMessageBox, QSplitter)
 from PyQt5.QtCore import Qt
@@ -121,6 +122,11 @@ class TextToSpeechApp(QMainWindow):
             chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
             self.log(f"Text in {len(chunks)} Abschnitte aufgeteilt.")
             
+            # Wähle zufällige Stimme
+            voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+            selected_voice = random.choice(voices)
+            self.log(f"Gewählte Stimme: {selected_voice}")
+            
             for i, chunk in enumerate(chunks, 1):
                 self.log(f"\nVerarbeite Abschnitt {i} von {len(chunks)}...")
                 
@@ -128,7 +134,7 @@ class TextToSpeechApp(QMainWindow):
                 self.log("Sende Anfrage an OpenAI TTS API...")
                 response = self.client.audio.speech.create(
                     model="tts-1",
-                    voice="alloy",
+                    voice=selected_voice,
                     input=chunk
                 )
                 self.log("Audio-Antwort von OpenAI erhalten.")
