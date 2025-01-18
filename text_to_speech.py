@@ -3,7 +3,7 @@ import os
 import traceback
 import random
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QTextEdit, QPushButton, QMessageBox, QSplitter, QProgressBar,
+                            QTextEdit, QPushButton, QSplitter, QProgressBar,
                             QHBoxLayout, QSlider, QComboBox, QLabel)
 from PyQt5.QtCore import Qt, QTimer
 import pygame
@@ -97,6 +97,7 @@ class TextToSpeechApp(QMainWindow):
 
         # Initialize playback state
         self.is_playing = False
+        self.temp_files = []
 
     def log(self, message):
         """Fügt eine Nachricht zum Log hinzu"""
@@ -116,15 +117,13 @@ class TextToSpeechApp(QMainWindow):
             api_key = os.getenv('OPENAI_API_KEY')
             
             if not api_key:
-                self.log("FEHLER: Kein OpenAI API-Key gefunden!")
-                QMessageBox.critical(
-                    self,
-                    "Fehler",
-                    "Kein OpenAI API-Key gefunden! Bitte setzen Sie die OPENAI_API_KEY Umgebungsvariable."
-                )
+                error_msg = "Kein OpenAI API-Key gefunden! Bitte setzen Sie die OPENAI_API_KEY Umgebungsvariable."
+                self.log("FEHLER: " + error_msg)
+                print("FEHLER: " + error_msg, file=sys.stderr)
                 sys.exit(1)
-                
-            self.client = OpenAI(api_key=api_key)
+            
+            # Einfache Client-Initialisierung ohne Proxy
+            self.client = OpenAI()  # API Key wird automatisch aus der Umgebungsvariable gelesen
             self.log("OpenAI Client erfolgreich initialisiert.")
         except Exception as e:
             self.log(f"FEHLER bei OpenAI Initialisierung: {str(e)}")
@@ -141,15 +140,17 @@ class TextToSpeechApp(QMainWindow):
             self.show_error("Audio-Initialisierungsfehler", e)
 
     def show_error(self, title, error):
-        """Zeigt einen Fehlerdialog und loggt den kompletten Traceback"""
+        """Zeigt einen Fehlermeldung in der Konsole und loggt den kompletten Traceback"""
+        error_msg = f"FEHLER: {title}\nDetails: {str(error)}"
         self.log("========================")
-        self.log(f"FEHLER: {title}")
-        self.log(f"Details: {str(error)}")
+        self.log(error_msg)
         self.log("Traceback:")
         self.log(traceback.format_exc())
         self.log("========================")
         
-        QMessageBox.critical(self, title, f"{str(error)}")
+        # Ausgabe in stderr
+        print(error_msg, file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
 
     def update_char_count(self):
         """Aktualisiert die Zeichenanzahl-Anzeige"""
@@ -177,8 +178,9 @@ class TextToSpeechApp(QMainWindow):
         text = self.text_edit.toPlainText().strip()
         
         if not text:
-            self.log("WARNUNG: Kein Text zum Vorlesen eingegeben.")
-            QMessageBox.warning(self, "Warnung", "Bitte geben Sie erst einen Text ein.")
+            warning_msg = "WARNUNG: Kein Text zum Vorlesen eingegeben."
+            self.log(warning_msg)
+            print(warning_msg, file=sys.stderr)
             return
 
         self.read_button.setEnabled(False)
@@ -197,16 +199,13 @@ class TextToSpeechApp(QMainWindow):
             self.progress_bar.setMaximum(len(chunks))
             self.progress_bar.setValue(0)
             
-            # Gewählte Stimme verwenden
-            selected_voice = self.voice_combo.currentText()
-            self.log(f"Gewählte Stimme: {selected_voice}")
+            selected_voice = self.voice_combo.currentText().lower()
             
-            for i, chunk in enumerate(chunks, 1):
+            # Temporäre Dateien für jeden Chunk erstellen und abspielen
+            for i, chunk in enumerate(chunks):
                 if not self.is_playing:
+                    self.log("Vorlesevorgang wurde abgebrochen.")
                     break
-                    
-                self.log(f"\nVerarbeite Abschnitt {i} von {len(chunks)}...")
-                self.progress_bar.setValue(i)
                 
                 # TTS-Anfrage an OpenAI
                 self.log("Sende Anfrage an OpenAI TTS API...")
@@ -215,11 +214,9 @@ class TextToSpeechApp(QMainWindow):
                     voice=selected_voice,
                     input=chunk
                 )
-                self.log("Audio-Antwort von OpenAI erhalten.")
                 
-                # Temporäre Datei für Audio erstellen
-                temp_dir = tempfile.gettempdir()
-                temp_file_path = os.path.join(temp_dir, f"readaloud_temp_{i}.mp3")
+                temp_file_path = os.path.join(tempfile.gettempdir(), f"tts_chunk_{i}.mp3")
+                self.temp_files.append(temp_file_path)
                 
                 try:
                     self.log(f"Schreibe Audio in temporäre Datei: {temp_file_path}")
