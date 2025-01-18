@@ -10,10 +10,12 @@ import pygame
 import tempfile
 from dotenv import load_dotenv
 from openai import OpenAI
+import httpx
 
 class TextToSpeechApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.had_error = False  # Flag für aufgetretene Fehler
         self.init_ui()
         self.init_openai()
         self.init_audio()
@@ -122,8 +124,12 @@ class TextToSpeechApp(QMainWindow):
                 print("FEHLER: " + error_msg, file=sys.stderr)
                 sys.exit(1)
             
-            # Einfache Client-Initialisierung ohne Proxy
-            self.client = OpenAI()  # API Key wird automatisch aus der Umgebungsvariable gelesen
+            # Client mit HTTP-Client initialisieren
+            http_client = httpx.Client()
+            self.client = OpenAI(
+                api_key=api_key,
+                http_client=http_client
+            )
             self.log("OpenAI Client erfolgreich initialisiert.")
         except Exception as e:
             self.log(f"FEHLER bei OpenAI Initialisierung: {str(e)}")
@@ -141,6 +147,7 @@ class TextToSpeechApp(QMainWindow):
 
     def show_error(self, title, error):
         """Zeigt einen Fehlermeldung in der Konsole und loggt den kompletten Traceback"""
+        self.had_error = True  # Setze Error-Flag
         error_msg = f"FEHLER: {title}\nDetails: {str(error)}"
         self.log("========================")
         self.log(error_msg)
@@ -220,7 +227,8 @@ class TextToSpeechApp(QMainWindow):
                 
                 try:
                     self.log(f"Schreibe Audio in temporäre Datei: {temp_file_path}")
-                    response.stream_to_file(temp_file_path)
+                    with open(temp_file_path, 'wb') as f:
+                        f.write(response.content)
                     
                     if not os.path.exists(temp_file_path):
                         raise FileNotFoundError(f"Temporäre Datei wurde nicht erstellt: {temp_file_path}")
@@ -270,8 +278,23 @@ class TextToSpeechApp(QMainWindow):
             self.stop_button.setEnabled(False)
             self.progress_bar.setVisible(False)
 
+    def closeEvent(self, event):
+        """Wird beim Schließen der Anwendung aufgerufen"""
+        if self.had_error:
+            sys.exit(1)
+        event.accept()
+
 if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    window = TextToSpeechApp()
-    window.show()
-    sys.exit(app.exec_())
+    try:
+        app = QApplication(sys.argv)
+        window = TextToSpeechApp()
+        window.show()
+        exit_code = app.exec_()
+        # Wenn ein Fehler aufgetreten ist, beende mit Exit-Code 1
+        if window.had_error:
+            sys.exit(1)
+        sys.exit(exit_code)
+    except Exception as e:
+        print(f"KRITISCHER FEHLER: {str(e)}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
+        sys.exit(1)
